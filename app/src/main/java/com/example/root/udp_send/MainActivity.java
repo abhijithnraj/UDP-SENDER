@@ -51,8 +51,8 @@ import java.net.UnknownHostException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.Enumeration;
-
 /*
 * Flow of Control of the Android App
 * ChoiseActivity either moves into MainActivity(Send Button) or RecieveActivity(Recieve Button)
@@ -66,6 +66,59 @@ import java.util.Enumeration;
 * submit button performs following things just adjust the view
 *
 * */
+
+class Scan extends Thread {
+    String ip;
+    public static ArrayList<String>availableIPList = new ArrayList<String>();
+    public static boolean DEBUG=false;
+    public ArrayList<Object> result;
+    public static ListView ipListDisplay;
+    public static Context context;
+
+    public void run() {
+        result = Scan.ping(ip);
+    }
+    public void start(String ip,ListView ipListDisplay,Context context) {
+        this.ip=ip;
+        this.ipListDisplay=ipListDisplay;
+        this.context=context;
+        System.out.println("Thread started");
+        start();
+    }
+    public static ArrayList<Object> ping(String ip) {
+        try {
+
+            Date start = new Date();
+            Date stop;
+            InetAddress i = InetAddress.getByName(ip);
+            boolean rechable=i.isReachable(500);
+            if(rechable) {
+                System.out.println("Found Available ip:"+ip);
+                availableIPList.add(ip);
+                ArrayAdapter ipItemsAdapter = new ArrayAdapter<String>(context,android.R.layout.simple_list_item_1, availableIPList);
+                ipItemsAdapter.notifyDataSetChanged();
+                ipListDisplay.setAdapter(ipItemsAdapter);
+            }
+
+            stop=new Date();
+            if(Scan.DEBUG) {
+                System.out.println(stop.getTime()-start.getTime());
+                System.out.println("Is host rechable ?:"+rechable);
+            }
+            ArrayList<Object> ret = new ArrayList<Object>();
+            ret.add(rechable);
+            ret.add((int)(stop.getTime()-start.getTime()));
+            return ret;
+        } catch (UnknownHostException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        } catch (IOException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+        return null;
+    }
+    }
 public class MainActivity extends AppCompatActivity {
     String ip;
     Button button;
@@ -77,7 +130,8 @@ public class MainActivity extends AppCompatActivity {
     EditText ipEdit,portEdit;
     Button submit;
     ListView ipListDisplay;
-    int pingTimeout=1000;
+    int pingTimeout=10;
+    ArrayList<String> availableIPList= new ArrayList<String>();
     @Override
     public void onDestroy() {
 
@@ -108,7 +162,61 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    public String getmd5(MessageDigest digest,byte[] b){
+    public void showAvailableIPListByThread() {
+        String ipString= null;
+        ipString = getDeviceIP();
+        final Scan[] scanThread = new Scan[256];
+        if(ipString.equals("0.0.0.0")){
+            ipString="192.168.43.1";
+        }
+        System.out.println("Sender IP address is "+ipString);
+        String[] ipComponents=ipString.split("\\.");
+        final String ipConst=ipComponents[0]+"."+ipComponents[1]+"."+ipComponents[2]+".";
+//        for(int i=0;i<256;i++){
+//            scanThread[i]=new Scan();
+//            final int finalI = i;
+//            runOnUiThread(new Runnable() {
+//                @Override
+//                public void run() {
+//                    scanThread[finalI].start(ipConst+ finalI,ipListDisplay,MainActivity.this);
+//                }
+//            });
+        Thread[] t = new Thread[256];
+        for(int i=0;i<256;i++){
+            final int finalI = i;
+            t[i]=new Thread(){
+                public void run(){
+                    InetAddress inet = null;
+                    try {
+                        final String ipAdd=ipConst+ finalI;
+                        inet = InetAddress.getByName(ipAdd);
+                        boolean rechable= inet.isReachable(500);
+                        if(rechable){
+                            runOnUiThread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    System.out.println("Found Available ip:"+ipAdd);
+                                    availableIPList.add(ipAdd);
+                                    ArrayAdapter ipItemsAdapter = new ArrayAdapter<String>(getApplicationContext(),android.R.layout.simple_list_item_1, availableIPList);
+                                    ipItemsAdapter.notifyDataSetChanged();
+                                    ipListDisplay.setAdapter(ipItemsAdapter);
+                                }
+                            });
+                        }
+                    } catch (UnknownHostException e) {
+                        e.printStackTrace();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+
+                };
+            };
+            t[i].start();
+
+        }
+    }
+
+    public String getmd5(MessageDigest digest, byte[] b){
         char[] hextable = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
         digest.update(b);
         byte messageDigest[] = digest.digest();
@@ -131,7 +239,7 @@ public class MainActivity extends AppCompatActivity {
         return ipString;
 
     }
-    ArrayList<String> availableIPList= new ArrayList<String>();
+
     ArrayAdapter<String> ipItemsAdapter=null;
     public void UDPScan(int timeout){
         String ipString= null;
@@ -544,7 +652,8 @@ public class MainActivity extends AppCompatActivity {
                     @Override
                     public void run() {
                         System.out.println("Started UDP Scan to identify all active ips -> could be erraneous");
-                        UDPScan(20);
+//                        UDPScan(20);
+                        showAvailableIPListByThread();
                     }
                 };
 
@@ -557,7 +666,7 @@ public class MainActivity extends AppCompatActivity {
                         udpScannerThread.start();
                         displayTerminal("FileName not null loop started");
                         while(fileName.equals("")){
-                            displayTerminal("Waiting for File Name to be not null");
+//                            displayTerminal("Waiting for File Name to be not null");
                         };
                         displayTerminal("File Choiser Wait loop completed");
                         displayTerminal("File choser completed");
@@ -568,7 +677,7 @@ public class MainActivity extends AppCompatActivity {
                                 ipListDisplay.setVisibility(ListView.VISIBLE);
                             }
                         });
-
+                        
                     }
 
                 };
