@@ -23,8 +23,11 @@ import android.text.format.Formatter;
 import android.util.Log;
 import android.view.View;
 import android.view.inputmethod.InputMethodManager;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -41,6 +44,7 @@ import java.math.BigInteger;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
 import java.net.SocketException;
 import java.net.UnknownHostException;
@@ -49,28 +53,41 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Enumeration;
 
-
+/*
+* Flow of Control of the Android App
+* ChoiseActivity either moves into MainActivity(Send Button) or RecieveActivity(Recieve Button)
+* MainActivity-> Send Button => has button = button picker implementation has readFileThread and getFileThread
+* First getFileThread provides filename and a while loop is executed for waiting until file name is not null
+* Then read ip and port from user and press submit button
+* button_picker button performs following things  UDPSCAN,establishUDPConnection,readAndSendFile
+* UDPSCAN()=> SCAN FOR ALL OPEN PORTS
+* establishUDPConnection(ip,PORT) => handshake and return DataGramSocket
+* readAndSendFile(fileName,s) => Read data and Send then using Socket
+* submit button performs following things just adjust the view
+*
+* */
 public class MainActivity extends AppCompatActivity {
     String ip;
     Button button;
     ProgressBar progressBar;
     long totalProgress=0;
     long currentProgress=0;
-    TextView ipDisplay;
     TextView progressDisplay;
     String PORT="1234";
     EditText ipEdit,portEdit;
     Button submit;
+    ListView ipListDisplay;
+    int pingTimeout=1000;
     @Override
     public void onDestroy() {
 
         MainActivity.this.finish();
         super.onDestroy();
         if(getFileThread!=null) {
-            getFileThread.stop();
+//            getFileThread.stop();
         }
         if(readFileThread!=null) {
-            readFileThread.stop();
+//            readFileThread.stop();
         }
 
     }
@@ -78,6 +95,7 @@ public class MainActivity extends AppCompatActivity {
         System.out.println(data);
     }
     private void showFileChooser() {
+        displayTerminal("File Chooser internt started");
         Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
         intent.setType("*/*");
         intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -113,35 +131,67 @@ public class MainActivity extends AppCompatActivity {
         return ipString;
 
     }
-
-    public void UDPScan(){
-        String ipString="1.2.3.4";
-        System.out.println(ipString);
-        String[] ipComponents=ipString.split("\\.");
-        for(String s:ipComponents){
-            System.out.println(s);
+    ArrayList<String> availableIPList= new ArrayList<String>();
+    ArrayAdapter<String> ipItemsAdapter=null;
+    public void UDPScan(int timeout){
+        String ipString= null;
+        ipString = getDeviceIP();
+        if(ipString.equals("0.0.0.0")){
+            ipString="192.168.43.1";
         }
+        System.out.println("Sender IP address is "+ipString);
+        String[] ipComponents=ipString.split("\\.");
         String ipConst=ipComponents[0]+"."+ipComponents[1]+"."+ipComponents[2]+".";
+
         try {
             DatagramSocket s = new DatagramSocket();
-            String messageStr="Android";
-            int server_port = 12345;
+            int server_port = 1234;
+            displayTerminal("About to scan all the ip address ranging from "+ipConst+"0 to "+ipConst+"255");
+            ipItemsAdapter =new ArrayAdapter<String>(this,android.R.layout.simple_list_item_1,availableIPList);
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    ipListDisplay.setAdapter(ipItemsAdapter);
+                }
+            });
+
             for(int i=0;i<=255;i++){
                 String actualIP=ipConst+i;
-                InetAddress local = InetAddress.getByName(actualIP);
-                int msg_length=messageStr.length();
-                byte[] message = messageStr.getBytes();
-                DatagramPacket p = new DatagramPacket(message, msg_length,local,server_port);
-                s.send(p);
-                byte[] mes = new byte[1500];
-                DatagramPacket p2 = new DatagramPacket(message, message.length);
-                DatagramSocket s2 = new DatagramSocket(server_port);
-                s2.receive(p);
-                String text = new String(message, 0, p.getLength());
-                Log.d("Udp tutorial","message:" + text);
-                s.close();
-                System.out.println(actualIP);
+//                displayTerminal("Searching for ip :"+actualIP);
+                if(InetAddress.getByName(actualIP).isReachable(pingTimeout) && !actualIP.equals(ipString)){
+                    availableIPList.add(actualIP);
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            ipItemsAdapter = new ArrayAdapter<String>(MainActivity.this, android.R.layout.simple_list_item_1, availableIPList);
+                            ipItemsAdapter.notifyDataSetChanged();
+                            ipListDisplay.setAdapter(ipItemsAdapter);
+
+                        }
+                    });
+
+//                    System.out.println("ip address: "+actualIP+" available");
+                }
             }
+            for(String ipAdress:availableIPList){
+                displayTerminal("Available ip address : "+ipAdress);
+            }
+
+
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    ipListDisplay.setAdapter(ipItemsAdapter);
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            ipListDisplay.setVisibility(ListView.VISIBLE);
+                        }
+                    });
+                }
+            });
+
+
         } catch (SocketException e) {
             e.printStackTrace();
         } catch (UnknownHostException e) {
@@ -152,32 +202,68 @@ public class MainActivity extends AppCompatActivity {
 
 
     }
-
+    int counter=0;
+    String confirmationString="";
     public DatagramSocket establishUDPConnection(String address,String port){
         DatagramSocket s =null;
+        displayTerminal("UDP Connection Sender Side Handshake Started");
+
         while(true) {
             try {
+                counter+=1;
+                if(counter>10){
+                    break;
+                }
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        progressDisplay.setText("Waiting for authentification from Reciever Side :"+counter);
+                    }
+                });
+                displayTerminal("Waiting for Authentification from the Reciever Side");
                 String message = "Android";
-                s = new DatagramSocket();
+                String f[]=fileName.split("/");
+                message+= "@"+f[f.length-1];
+                File fi = new File(fileName);
+                message+="@"+fi.length();
+                int BUFFER_SIZE= (int) (totalProgress*0.1);
+                if(BUFFER_SIZE> 1000000000){
+                    BUFFER_SIZE=1000000000;
+                }
+                BUFFER_SIZE=60000;
+                message+="@"+BUFFER_SIZE;
+                s = new DatagramSocket(null);
+                s.setReuseAddress(true);
+                s.bind(new InetSocketAddress(Integer.parseInt(PORT)));
                 InetAddress local = InetAddress.getByName(address);
                 int msg_length = message.length();
                 byte[] m = message.getBytes();
                 DatagramPacket p = new DatagramPacket(m, msg_length, local, Integer.parseInt(port));
-
                 s.send(p);
-                displayTerminal("Sending");
+                displayTerminal("Sending keyword Android to the Receiver");
                 final byte[] recMessage = new byte[1500];
                 final DatagramPacket pRec = new DatagramPacket(recMessage, recMessage.length);
-                s.setSoTimeout(2000);
+                displayTerminal("Waiting for the Sender to Send back Acknowledgement");
+                s.setSoTimeout(10000);
                 s.receive(pRec);
+                displayTerminal("The Reciever has send some text and Sender has recieved it");
 
                 final String text = new String(recMessage, 0, pRec.getLength());
                 System.out.println("Text recieved is "+text);
-                break;
-//                if (text.equals( "Acknowledge")) {
-//                    break;
-//                }
+                displayTerminal("Handshake Completed break executed");
+                if (text.startsWith( "Acknowledge")) {
+                    confirmationString=text.split("@")[1];
+                    if(confirmationString.equals("true")){
+                        displayTerminal("Started readAndSendFile Function");
+                        readAndSendFile(fi, s);
+                        displayTerminal("Completed readAndSendFile Function");
 
+                    }
+                    else{
+                        progressDisplay.setText("The Reciever Rejected the Transfer");
+                    }
+                }
+                break;
 //
 //                showToastInThread(this.getBaseContext(), "Message Send");
 
@@ -194,13 +280,14 @@ public class MainActivity extends AppCompatActivity {
 
     }
 
+    ArrayList<String>md5SumList=new ArrayList<String>();
     public void sendUDP(String hash,byte[] b){
 
 
     }
     int perc=0;
-    public void readFile(String fileName) throws IOException {
-        File fi = new File(fileName);
+    public void readAndSendFile(File fi,DatagramSocket s) throws IOException {
+
         totalProgress=fi.length();
         FileInputStream in = null;
         currentProgress=0;
@@ -209,6 +296,7 @@ public class MainActivity extends AppCompatActivity {
         if(BUFFER_SIZE> 1000000000){
             BUFFER_SIZE=1000000000;
         }
+        BUFFER_SIZE=60000;   ;
         byte[] b = new byte[BUFFER_SIZE];
         MessageDigest digest = null;
         try {
@@ -223,6 +311,15 @@ public class MainActivity extends AppCompatActivity {
             System.out.println("Started");
             String hash;
             while((availableBytes  = in.read(b)) != -1){
+                InetAddress local = InetAddress.getByName(ip);
+                DatagramPacket pSend = new DatagramPacket(b, b.length, local,Integer.parseInt(PORT));
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+                s.send(pSend);
+
                 currentProgress+=BUFFER_SIZE;
                 perc= (int) ((currentProgress*100)/totalProgress);
                 progressBar.setProgress(perc);
@@ -237,16 +334,20 @@ public class MainActivity extends AppCompatActivity {
                     }
                 });
                 hash=getmd5(digest,b);
-                System.out.println(hash);
+                md5SumList.add(hash);
 
             }
-            displayTerminal("File Reading Completed");
+            displayTerminal("The File has been read completely and all the md5 sums calculated and displayed");
             Runtime.getRuntime().gc();
             String deviceIP=getDeviceIP();
+            System.out.println("The md5 Sums are :");
+            for(String h:md5SumList){
+                System.out.println(h);
+            }
 
         } catch (FileNotFoundException e) {
             e.printStackTrace();
-            displayTerminal("Failed");
+            displayTerminal("File not Found exception error has occured");
 
         }
 
@@ -346,21 +447,23 @@ public class MainActivity extends AppCompatActivity {
         return "com.android.providers.media.documents".equals(uri.getAuthority());
     }
     String fileName="";
-
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-
+        System.out.println("File Picker returned with result code "+resultCode);
         switch (requestCode) {
             case 7:
-                if (resultCode == RESULT_OK) {
+                if (resultCode == RESULT_OK && data!=null) {
+                    System.out.println("Data has returned");
                     String PathHolder = getPathFromURI(getBaseContext(),data.getData());
                     fileName=PathHolder;
+                    System.out.print("");
 //                    Toast.makeText(MainActivity.this, PathHolder, Toast.LENGTH_LONG).show();
+                }
+                else{
+                    System.out.println("Some Data error occured after file picking");
                 }
                 break;
         }
-
-
 
     }
 
@@ -393,95 +496,85 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
         progressBar=(ProgressBar)findViewById(R.id.pgbarFile);
         button = (Button) findViewById(R.id.btn_picker);
-        ipDisplay = (TextView)findViewById(R.id.txtvwIPDisplay);
-        ipDisplay.setVisibility(ipDisplay.INVISIBLE);
         progressDisplay = (TextView)findViewById(R.id.txtvwProgress);
-        ipEdit = (EditText)findViewById(R.id.edtIP2);
-        portEdit=(EditText)findViewById(R.id.edtPort2);
-        ipEdit.setVisibility(ipEdit.INVISIBLE);
-        portEdit.setVisibility(portEdit.INVISIBLE);
         progressDisplay.setVisibility(progressDisplay.INVISIBLE);
-        submit = (Button)findViewById(R.id.btnSubmit);
-        submit.setVisibility(submit.INVISIBLE);
+        ipListDisplay = (ListView)findViewById(R.id.listvwIPs);
+//        ipListDisplay.setVisibility(ListView.INVISIBLE);
+        progressBar.setVisibility(ProgressBar.INVISIBLE);
+        progressDisplay.setVisibility(progressDisplay.INVISIBLE);
 
-
-        submit.setOnClickListener(new View.OnClickListener() {
+        ipListDisplay.setOnItemClickListener(new AdapterView.OnItemClickListener() {
             @Override
-            public void onClick(View view) {
-                InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
-                imm.hideSoftInputFromWindow(getCurrentFocus().getWindowToken(), 0);
-
-                ip=ipEdit.getText().toString();
-                PORT=portEdit.getText().toString();
-                runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        progressBar.animate().setDuration(1000).translationYBy(-800);
-                    }
-                });
-
-                ipEdit.setVisibility(ipEdit.INVISIBLE);
-                portEdit.setVisibility(portEdit.INVISIBLE);
-                submit.setVisibility(submit.INVISIBLE);
+            public void onItemClick(AdapterView<?> adapterView, View view, int i, long l) {
+                ip= availableIPList.get(i);
                 progressDisplay.setVisibility(progressDisplay.VISIBLE);
                 readFileThread.start();
-
-
-
+//                ipListDisplay.setVisibility(ListView.INVISIBLE);
             }
         });
 
         button.setOnClickListener(new View.OnClickListener(){
-
             @Override
             public void onClick(View v) {
 //                button.setVisibility(button.INVISIBLE);
-                displayTerminal("CLicked");
+                displayTerminal("File Picker button clicked");
                 button.setVisibility(button.INVISIBLE);
                   readFileThread = new Thread(){
                     public void run(){
-                        try {
-//                            progressBar.setVisibility(progressBar.VISIBLE);
-                            displayTerminal("Started Reading Files");
-                            establishUDPConnection(ip,PORT);
-                            readFile(fileName);
-                            displayTerminal("Completed reading Files");
+                        //                            progressBar.setVisibility(progressBar.VISIBLE);
+                        displayTerminal("Handshake Function establish udp connection called");
+                        DatagramSocket s=null;
+                        s=establishUDPConnection(ip,PORT);
+                        displayTerminal("UDP Connection Established and Socket Recieved");
+                        if(s==null){
+                            displayTerminal("Socket Recieved from establishUDPConnection() is null");
+                            displayTerminal("Sender didn't Acknowledge the Reciever Message");
+                        }
+                        {
+                            displayTerminal("Socket object created successfully");
+
+                        }
+
 //                            Intent i = new Intent(MainActivity.this,MainActivity.class);
 //                            startActivity(i);
 
-                        } catch (IOException e) {
-                            e.printStackTrace();
-                        }
-
                     }
                 };
-                  getFileThread = new Thread(){
+                final Thread udpScannerThread = new Thread(){
+                    @Override
+                    public void run() {
+                        System.out.println("Started UDP Scan to identify all active ips -> could be erraneous");
+                        UDPScan(20);
+                    }
+                };
+
+
+                getFileThread = new Thread(){
                     public void run(){
                         fileName="";
+                        displayTerminal("About to display File Chooser");
                         showFileChooser();
-                        displayTerminal("About to read files");
-                        while(fileName==""){
-//                            displayTerminal("Waiting for File Name to be not null");
+                        udpScannerThread.start();
+                        displayTerminal("FileName not null loop started");
+                        while(fileName.equals("")){
+                            displayTerminal("Waiting for File Name to be not null");
                         };
-                        displayTerminal("completed loop");
+                        displayTerminal("File Choiser Wait loop completed");
+                        displayTerminal("File choser completed");
+                        displayTerminal("File chosen: "+fileName);
                         runOnUiThread(new Runnable() {
                             @Override
                             public void run() {
-                                ipEdit.setVisibility(ipEdit.VISIBLE);
-                                portEdit.setVisibility(portEdit.VISIBLE);
-                                submit.setVisibility(submit.VISIBLE);
-
+                                ipListDisplay.setVisibility(ListView.VISIBLE);
                             }
                         });
-
 
                     }
 
                 };
 
-
                 getFileThread.start();
-                Toast.makeText(MainActivity.this, "COMPLETED", Toast.LENGTH_LONG).show();
+                displayTerminal("File Picker File Thread Started");
 
             }
         });
